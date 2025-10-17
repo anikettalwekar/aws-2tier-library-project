@@ -1,0 +1,83 @@
+pipeline {
+  agent any
+
+  environment {
+    TF_IN_AUTOMATION = 'true'
+  }
+
+  options {
+    timestamps()
+    ansiColor('xterm')
+  }
+
+  stages {
+
+    stage('Checkout') {
+      steps {
+        echo 'Checking out GitHub repository...'
+        checkout scm
+      }
+    }
+
+    stage('Terraform Init') {
+      steps {
+        withCredentials([usernamePassword(credentialsId: 'aws-creds',
+                                          usernameVariable: 'AWS_ACCESS_KEY_ID',
+                                          passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+          sh '''
+            terraform init -input=false
+          '''
+        }
+      }
+    }
+
+    stage('Terraform Validate') {
+      steps {
+        sh 'terraform validate'
+      }
+    }
+
+    stage('Terraform Plan') {
+      steps {
+        withCredentials([usernamePassword(credentialsId: 'aws-creds',
+                                          usernameVariable: 'AWS_ACCESS_KEY_ID',
+                                          passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+          sh '''
+            terraform plan -input=false -out=tfplan
+          '''
+        }
+      }
+      post {
+        success {
+          archiveArtifacts artifacts: 'tfplan', fingerprint: true
+        }
+      }
+    }
+
+    stage('Terraform Apply (Manual Approval)') {
+      when {
+        expression { return params.APPLY == true }
+      }
+      steps {
+        input message: 'Do you want to apply the Terraform plan?', ok: 'Apply Now'
+        withCredentials([usernamePassword(credentialsId: 'aws-creds',
+                                          usernameVariable: 'AWS_ACCESS_KEY_ID',
+                                          passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+          sh '''
+            terraform apply -input=false -auto-approve tfplan
+          '''
+        }
+      }
+    }
+  }
+
+  parameters {
+    booleanParam(name: 'APPLY', defaultValue: false, description: 'If true, will run terraform apply after plan')
+  }
+
+  post {
+    always {
+      sh 'terraform output || true'
+    }
+  }
+}
