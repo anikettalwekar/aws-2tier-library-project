@@ -5,51 +5,46 @@ pipeline {
     TF_IN_AUTOMATION = 'true'
   }
 
-  options {
-    timestamps()
-    //ansiColor('xterm')
+  parameters {
+    booleanParam(name: 'APPLY', defaultValue: false, description: 'Run terraform apply after plan?')
   }
 
   stages {
-
     stage('Checkout') {
       steps {
-        echo 'Checking out GitHub repository...'
+        echo 'Fetching code from GitHub...'
         checkout scm
       }
     }
 
     stage('Terraform Init') {
       steps {
-        withCredentials([usernamePassword(credentialsId: 'aws-creds',
-                                          usernameVariable: 'AWS_ACCESS_KEY_ID',
-                                          passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
-          sh '''
-            terraform init -input=false
-          '''
+        dir('terraform-aws-infra') {
+          withCredentials([usernamePassword(credentialsId: 'aws-creds',
+                                            usernameVariable: 'AWS_ACCESS_KEY_ID',
+                                            passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+            sh 'terraform init -input=false'
+          }
         }
       }
     }
 
     stage('Terraform Validate') {
       steps {
-        sh 'terraform validate'
+        dir('terraform-aws-infra') {
+          sh 'terraform validate'
+        }
       }
     }
 
     stage('Terraform Plan') {
       steps {
-        withCredentials([usernamePassword(credentialsId: 'aws-creds',
-                                          usernameVariable: 'AWS_ACCESS_KEY_ID',
-                                          passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
-          sh '''
-            terraform plan -input=false -out=tfplan
-          '''
-        }
-      }
-      post {
-        success {
-          archiveArtifacts artifacts: 'tfplan', fingerprint: true
+        dir('terraform-aws-infra') {
+          withCredentials([usernamePassword(credentialsId: 'aws-creds',
+                                            usernameVariable: 'AWS_ACCESS_KEY_ID',
+                                            passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+            sh 'terraform plan -out=tfplan -input=false'
+          }
         }
       }
     }
@@ -59,25 +54,23 @@ pipeline {
         expression { return params.APPLY == true }
       }
       steps {
-        input message: 'Do you want to apply the Terraform plan?', ok: 'Apply Now'
-        withCredentials([usernamePassword(credentialsId: 'aws-creds',
-                                          usernameVariable: 'AWS_ACCESS_KEY_ID',
-                                          passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
-          sh '''
-            terraform apply -input=false -auto-approve tfplan
-          '''
+        input message: 'Apply Terraform changes?', ok: 'Apply Now'
+        dir('terraform-aws-infra') {
+          withCredentials([usernamePassword(credentialsId: 'aws-creds',
+                                            usernameVariable: 'AWS_ACCESS_KEY_ID',
+                                            passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+            sh 'terraform apply -input=false -auto-approve tfplan'
+          }
         }
       }
     }
   }
 
-  parameters {
-    booleanParam(name: 'APPLY', defaultValue: false, description: 'If true, will run terraform apply after plan')
-  }
-
   post {
     always {
-      sh 'terraform output || true'
+      dir('terraform-aws-infra') {
+        sh 'terraform output || true'
+      }
     }
   }
 }
